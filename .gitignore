@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.zip
+live.csv
+live.stderr
+smoke.csv
+smoke.stderr
+.DS_Store
