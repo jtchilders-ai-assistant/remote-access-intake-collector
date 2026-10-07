@@ -16,8 +16,7 @@ from collections import namedtuple
 from datetime import date
 from pathlib import Path
 
-HEADER = ["Record ID", "Submitted By", "Email Address", "Date Submitted", "Directorate", "Division or Facility", "Group or Project", "System Owner", "System Administrator", "Host Name or Asset ID", "FQDN", "IP Address", "Subnet or CIDR", "Network Zone or Location", "Physical or Virtual", "Operating System", "OS Version", "Argonne Managed Host", "Application or Service Name", "Application Purpose or Lost Capability", "Impact of Tailscale Block", "Access Source Location", "Protocol", "Port or Port Range", "Transport", "HTTP or HTTPS URL Path", "Additional Notes", "Information Sensitivity Reminder"]
-REMINDER = "Do not enter passwords, private keys, tokens, credentials, or other secrets. Verify automatically collected values before submission."
+HEADER = ["Record ID", "Submitted By", "Email Address", "Date Submitted", "Directorate", "Division or Facility", "Group or Project", "System Owner", "System Administrator", "Host Name or Asset ID", "FQDN", "IP Address", "Subnet or CIDR", "Network Zone or Location", "Physical or Virtual", "Operating System", "OS Version", "Argonne Managed Host", "Application or Service Name", "Application Purpose or Lost Capability", "Impact of Tailscale Block", "Access Source Location", "Protocol", "Port or Port Range", "Transport", "HTTP or HTTPS URL Path", "Additional Notes"]
 CommandResult = namedtuple("CommandResult", "ok stdout stderr")
 
 
@@ -184,16 +183,31 @@ def prompt_answers(input_fn=input, output=sys.stderr, existing=None):
     if not answers.get("argonne_managed"):
         answers["argonne_managed"] = _choice("Argonne-managed host? [1] Yes [2] No: ", {"1": "Yes", "2": "No"}, input_fn, output)
     if not answers.get("application"):
-        answers["application"] = _required("Application used with Tailscale: ", input_fn, output)
+        answers["application"] = _required("Describe the application or service you used through Tailscale (example: Hermes HTTP agent): ", input_fn, output)
+    for key, prompt in [
+        ("purpose", "Describe its purpose or the capability lost without Tailscale (example: remotely build and test software): "),
+        ("impact", "Describe the impact of the Tailscale block (example: compute nodes can no longer reach the service): "),
+    ]:
+        if not answers.get(key):
+            answers[key] = _required(prompt, input_fn, output)
     if not answers.get("access_source"):
         answers["access_source"] = _choice("Access source location? [1] Outside ANL [2] Inside ANL [3] Mobile/Laptop: ", {"1": "Outside ANL", "2": "Inside ANL", "3": "Mobile/Laptop"}, input_fn, output)
+    for key, prompt in [
+        ("protocol", "Protocol used (example: HTTP, HTTPS, SSH): "),
+        ("port", "Port or port range (example: 443 or 8000-8010; enter Unknown if unsure): "),
+        ("transport", "Transport protocol (example: TCP or UDP; enter Unknown if unsure): "),
+        ("url_path", "HTTP or HTTPS URL path (example: /api; enter N/A if not applicable): "),
+        ("additional_notes", "Additional notes (example: access originated from ALCF compute nodes; enter None if there are no additional notes): "),
+    ]:
+        if not answers.get(key):
+            answers[key] = _required(prompt, input_fn, output)
     return answers
 
 
 def build_row(host, answers, today=None):
     today = today or date.today()
     row = blank_row()
-    row.update({"Submitted By": answers["submitted_by"], "Email Address": answers["email"], "Date Submitted": today.isoformat(), "Directorate": answers["directorate"], "Division or Facility": answers["division"], "Group or Project": answers["group_project"], "Host Name or Asset ID": host.get("hostname", ""), "FQDN": host.get("fqdn", ""), "IP Address": "; ".join(host.get("ips", [])), "Subnet or CIDR": "; ".join(host.get("cidrs", [])), "Network Zone or Location": "Interfaces: " + "; ".join(host.get("interfaces", [])) if host.get("interfaces") else "", "Physical or Virtual": host.get("physical_virtual", ""), "Operating System": host.get("os", ""), "OS Version": host.get("os_version", ""), "Argonne Managed Host": answers["argonne_managed"], "Application or Service Name": answers["application"], "Access Source Location": answers["access_source"], "Additional Notes": "Host metadata collected automatically; complete the blank use-case fields and verify all values before submission.", "Information Sensitivity Reminder": REMINDER})
+    row.update({"Submitted By": answers["submitted_by"], "Email Address": answers["email"], "Date Submitted": today.isoformat(), "Directorate": answers["directorate"], "Division or Facility": answers["division"], "Group or Project": answers["group_project"], "Host Name or Asset ID": host.get("hostname", ""), "FQDN": host.get("fqdn", ""), "IP Address": "; ".join(host.get("ips", [])), "Subnet or CIDR": "; ".join(host.get("cidrs", [])), "Network Zone or Location": "Interfaces: " + "; ".join(host.get("interfaces", [])) if host.get("interfaces") else "", "Physical or Virtual": host.get("physical_virtual", ""), "Operating System": host.get("os", ""), "OS Version": host.get("os_version", ""), "Argonne Managed Host": answers["argonne_managed"], "Application or Service Name": answers["application"], "Application Purpose or Lost Capability": answers["purpose"], "Impact of Tailscale Block": answers["impact"], "Access Source Location": answers["access_source"], "Protocol": answers["protocol"], "Port or Port Range": answers["port"], "Transport": answers["transport"], "HTTP or HTTPS URL Path": answers["url_path"], "Additional Notes": answers["additional_notes"]})
     return row
 
 
@@ -235,10 +249,17 @@ def main(argv=None):
     parser.add_argument("--group-project")
     parser.add_argument("--argonne-managed")
     parser.add_argument("--application")
+    parser.add_argument("--purpose")
+    parser.add_argument("--impact")
     parser.add_argument("--access-source")
+    parser.add_argument("--protocol")
+    parser.add_argument("--port")
+    parser.add_argument("--transport")
+    parser.add_argument("--url-path")
+    parser.add_argument("--additional-notes")
     args = parser.parse_args(argv)
     try:
-        existing = {"submitted_by": args.submitted_by, "email": args.email, "directorate": args.directorate, "division": args.division, "group_project": args.group_project, "argonne_managed": _normalize_choice(args.argonne_managed, ("Yes", "No"), "--argonne-managed"), "application": args.application, "access_source": _normalize_choice(args.access_source, ("Outside ANL", "Inside ANL", "Mobile/Laptop"), "--access-source")}
+        existing = {"submitted_by": args.submitted_by, "email": args.email, "directorate": args.directorate, "division": args.division, "group_project": args.group_project, "argonne_managed": _normalize_choice(args.argonne_managed, ("Yes", "No"), "--argonne-managed"), "application": args.application, "purpose": args.purpose, "impact": args.impact, "access_source": _normalize_choice(args.access_source, ("Outside ANL", "Inside ANL", "Mobile/Laptop"), "--access-source"), "protocol": args.protocol, "port": args.port, "transport": args.transport, "url_path": args.url_path, "additional_notes": args.additional_notes}
         answers = prompt_answers(input_fn=input, output=sys.stderr, existing=existing)
         text = render_csv([build_row(discover_host(), answers)], include_header=args.header)
         if args.output:

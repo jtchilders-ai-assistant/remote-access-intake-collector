@@ -24,12 +24,19 @@ The script asks for:
 - Division or facility
 - Group or project
 - Whether the host is Argonne managed
-- Application used with Tailscale
+- Application or service used with Tailscale, with an example
+- Application purpose or capability lost without Tailscale, with an example
+- Impact of the Tailscale block, with an example
 - Access source location: `Outside ANL`, `Inside ANL`, or `Mobile/Laptop`
+- Protocol, such as HTTP, HTTPS, or SSH
+- Port or port range, or `Unknown`
+- Transport, such as TCP or UDP, or `Unknown`
+- HTTP/HTTPS URL path, or `N/A`
+- Additional notes, or `None`
 
 `Date Submitted` is filled automatically with the local system date when the script runs. Hostname, validated FQDN, addresses, subnets, interfaces, OS, and OS version are collected automatically. Reverse-DNS `.arpa` artifacts are rejected as FQDNs.
 
-The remaining fields—including application purpose, impact, protocol, port, transport, and URL path—remain blank for the respondent to complete when known.
+All use-case fields are collected directly from the respondent. No application, protocol, or port is inferred from local listeners.
 
 ## Noninteractive use
 
@@ -44,7 +51,14 @@ python3 collect_host_intake.py --header --output host-intake.csv \
   --group-project "Agent project" \
   --argonne-managed Yes \
   --application "Hermes HTTP agent" \
-  --access-source "Mobile/Laptop"
+  --purpose "Build and test software remotely" \
+  --impact "Compute nodes can no longer reach the service" \
+  --access-source "Mobile/Laptop" \
+  --protocol HTTPS \
+  --port 443 \
+  --transport TCP \
+  --url-path /api \
+  --additional-notes "Access originated from ALCF compute nodes"
 ```
 
 If only some options are supplied, the script prompts for the missing answers.
