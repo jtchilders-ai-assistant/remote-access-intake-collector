@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect non-sensitive host and listening-service metadata as intake CSV."""
+"""Collect host metadata and one user-confirmed remote-access use case as CSV."""
 
 import argparse
 import csv
@@ -13,10 +13,11 @@ import subprocess
 import sys
 import tempfile
 from collections import namedtuple
+from datetime import date
 from pathlib import Path
 
-HEADER = "Record ID,Submission Status,Submitted By,Date Submitted,Directorate,Division or Facility,Group or Project,System Owner,System Administrator,Technical Contact,Host Name or Asset ID,FQDN,IP Address,Subnet or CIDR,Network Zone or Location,Physical or Virtual,Operating System,OS Version,Argonne Managed Host,EDR Installed,Original Block or Incident Reference,Application or Service Name,Application Purpose or Lost Capability,Application Owner,Application Criticality,Impact of Tailscale Block,Users Affected,User Population,External Collaborators or Institutions,Access Source Location,External Client Argonne Managed,Access Direction,Protocol,Port or Port Range,Transport,HTTP or HTTPS URL Path,Interactive or Machine to Machine,Authentication Method,Authorization or Group Requirements,MFA Required,Identity Provider,Data Sensitivity or Classification,Regulated or Export Controlled Data,Required Availability,Inbound File Transfer Needed,Outbound File Transfer Needed,SSH or Shell Needed,Desktop or GUI Needed,Database Access Needed,Agent or API Access Needed,Web Application Access Needed,Other Required Connectivity,Current Workaround,Workaround Limitations,Required Logging or Audit,Session Recording Required,Source IP Allowlisting Required,Fixed Client IP Required,DNS Requirements,Certificate or TLS Requirements,High Availability Required,Target Implementation Date,Preferred Open Source or On Premise Constraint,Must Not Route General Internet Traffic,Special Security Constraints,Additional Notes,Information Sensitivity Reminder".split(",")
-REMINDER = "Do not enter passwords, private keys, tokens, credentials, or other secrets. Verify automatically collected and inferred values before submission."
+HEADER = ["Record ID", "Submitted By", "Date Submitted", "Directorate", "Division or Facility", "Group or Project", "System Owner", "System Administrator", "Host Name or Asset ID", "FQDN", "IP Address", "Subnet or CIDR", "Network Zone or Location", "Physical or Virtual", "Operating System", "OS Version", "Argonne Managed Host", "Application or Service Name", "Application Purpose or Lost Capability", "Impact of Tailscale Block", "Access Source Location", "Protocol", "Port or Port Range", "Transport", "HTTP or HTTPS URL Path", "Additional Notes", "Information Sensitivity Reminder"]
+REMINDER = "Do not enter passwords, private keys, tokens, credentials, or other secrets. Verify automatically collected values before submission."
 CommandResult = namedtuple("CommandResult", "ok stdout stderr")
 
 
@@ -36,81 +37,10 @@ def render_csv(rows, include_header=False):
 
 def run_command(argv, timeout=5):
     try:
-        result = subprocess.run(argv, text=True, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, timeout=timeout,
-                                check=False, env={"PATH": os.environ.get("PATH", "")})
+        result = subprocess.run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False, env={"PATH": os.environ.get("PATH", "")})
         return CommandResult(result.returncode == 0, result.stdout, result.stderr)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return CommandResult(False, "", str(exc))
-
-
-def _split_endpoint(endpoint):
-    endpoint = endpoint.strip()
-    if endpoint.startswith("[") and "]:" in endpoint:
-        address, port = endpoint[1:].rsplit("]:", 1)
-    elif ":" in endpoint:
-        address, port = endpoint.rsplit(":", 1)
-    else:
-        return endpoint, None
-    try:
-        return address, int(port)
-    except ValueError:
-        return address, None
-
-
-def parse_ss(text):
-    services = []
-    for line in text.splitlines():
-        parts = line.split()
-        if len(parts) < 5:
-            continue
-        transport = parts[0].upper()
-        if transport not in ("TCP", "UDP"):
-            continue
-        endpoint_index = 4 if transport == "TCP" else 4
-        if len(parts) <= endpoint_index:
-            continue
-        address, port = _split_endpoint(parts[endpoint_index])
-        if port is None:
-            continue
-        match = re.search(r'users:\(\("([^"\n]+)"', line)
-        services.append({"transport": transport, "address": address,
-                         "port": port, "process": match.group(1) if match else "unknown"})
-    return services
-
-
-def parse_lsof(text):
-    services = []
-    for line in text.splitlines():
-        if not line.strip() or line.startswith("COMMAND "):
-            continue
-        parts = line.split()
-        if len(parts) < 9:
-            continue
-        match = re.search(r"\b(TCP|UDP)\s+(.+?)(?:\s+\(LISTEN\))?$", line)
-        if not match:
-            continue
-        transport, endpoint = match.groups()
-        if "->" in endpoint:
-            continue
-        address, port = _split_endpoint(endpoint)
-        if port is None:
-            continue
-        services.append({"transport": transport, "address": address,
-                         "port": port, "process": parts[0] or "unknown"})
-    return services
-
-
-def deduplicate_services(services):
-    grouped = {}
-    for service in services:
-        key = (service["transport"].upper(), int(service["port"]), service.get("process") or "unknown")
-        grouped.setdefault(key, set()).add(service.get("address") or "unknown")
-    result = []
-    for (transport, port, process), addresses in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1], item[0][2])):
-        result.append({"transport": transport, "port": port, "process": process,
-                       "address": "; ".join(sorted(addresses))})
-    return result
 
 
 def _network_tuple(interface, address, prefix):
@@ -208,96 +138,63 @@ def detect_virtualization(system_name):
     return "Unknown"
 
 
+def valid_fqdn(hostname, candidate):
+    candidate = (candidate or "").strip().rstrip(".")
+    if not candidate or candidate.lower().endswith(".arpa"):
+        return hostname
+    try:
+        ipaddress.ip_address(candidate)
+        return hostname
+    except ValueError:
+        return candidate
+
+
 def discover_host():
     system_name = platform.system() or "Unknown"
+    hostname = socket.gethostname()
     addresses = discover_addresses(system_name)
-    return {
-        "hostname": socket.gethostname(),
-        "fqdn": socket.getfqdn(),
-        "ips": sorted({item[1] for item in addresses}),
-        "cidrs": sorted({item[2] for item in addresses}),
-        "interfaces": sorted({item[0] for item in addresses}),
-        "os": system_name,
-        "os_version": platform.platform(),
-        "physical_virtual": detect_virtualization(system_name),
-    }
+    return {"hostname": hostname, "fqdn": valid_fqdn(hostname, socket.getfqdn()), "ips": sorted({item[1] for item in addresses}), "cidrs": sorted({item[2] for item in addresses}), "interfaces": sorted({item[0] for item in addresses}), "os": system_name, "os_version": platform.platform(), "physical_virtual": detect_virtualization(system_name)}
 
 
-def discover_services(system_name):
-    diagnostics = []
-    if system_name == "Linux":
-        result = run_command(["ss", "-H", "-lntup"])
-        if result.ok:
-            return deduplicate_services(parse_ss(result.stdout)), diagnostics
-        diagnostics.append("ss unavailable or failed")
-        result = run_command(["netstat", "-lntup"])
-        if result.ok:
-            return deduplicate_services(parse_ss(result.stdout)), diagnostics
-        diagnostics.append("netstat fallback unavailable or failed")
-    elif system_name == "Darwin":
-        result = run_command(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-iUDP"])
-        if result.ok:
-            return deduplicate_services(parse_lsof(result.stdout)), diagnostics
-        diagnostics.append("lsof unavailable or failed")
-        diagnostics.append("netstat fallback does not safely expose process/service ownership; omitted")
-    else:
-        diagnostics.append("listener discovery unsupported on {}".format(system_name))
-    return [], diagnostics
+def _read_prompt(prompt, input_fn, output):
+    print(prompt, end="", file=output, flush=True)
+    return input_fn("")
 
 
-def _classify(service):
-    port = service["port"]
-    process = service["process"].lower()
-    values = {}
-    if port == 22 or "sshd" in process:
-        values["SSH or Shell Needed"] = "Possible - inferred"
-    if port in {80, 443, 8000, 8080, 8443} or any(name in process for name in ("nginx", "httpd", "apache")):
-        values["Web Application Access Needed"] = "Possible - inferred"
-        values["HTTP or HTTPS URL Path"] = "Scheme inferred as HTTPS" if port in {443, 8443} else "Scheme inferred as HTTP"
-    if port in {3306, 5432, 6379, 1433, 1521, 27017, 9200} or any(name in process for name in ("postgres", "mysql", "mariadb", "redis", "mongod")):
-        values["Database Access Needed"] = "Possible - inferred"
-    if port in {3389, 5900, 5901} or any(name in process for name in ("vnc", "screensharing")):
-        values["Desktop or GUI Needed"] = "Possible - inferred"
-    if any(name in process for name in ("agent", "ollama", "vllm")):
-        values["Agent or API Access Needed"] = "Possible - inferred"
-    return values
+def _required(prompt, input_fn, output):
+    while True:
+        value = _read_prompt(prompt, input_fn, output).strip()
+        if value:
+            return value
 
 
-def build_rows(host, services, collection_notes=None):
-    collection_notes = collection_notes or []
-    source = services or [None]
-    rows = []
-    for service in source:
-        row = blank_row()
-        row.update({
-            "Submission Status": "Needs owner review",
-            "Host Name or Asset ID": host.get("hostname", ""),
-            "FQDN": host.get("fqdn", ""),
-            "IP Address": "; ".join(host.get("ips", [])),
-            "Subnet or CIDR": "; ".join(host.get("cidrs", [])),
-            "Network Zone or Location": "Interfaces: " + "; ".join(host.get("interfaces", [])) if host.get("interfaces") else "",
-            "Physical or Virtual": host.get("physical_virtual", ""),
-            "Operating System": host.get("os", ""),
-            "OS Version": host.get("os_version", ""),
-            "Information Sensitivity Reminder": REMINDER,
-        })
-        notes = ["Automatically collected; verify all values before submission."] + list(collection_notes)
-        if service:
-            row.update({
-                "Application or Service Name": service.get("process", "unknown"),
-                "Access Direction": "Inbound to host (listener detected)",
-                "Protocol": service["transport"],
-                "Port or Port Range": str(service["port"]),
-                "Transport": service["transport"],
-            })
-            row.update(_classify(service))
-            notes.append("Inferred from local listening socket bound to {}.".format(service.get("address", "unknown")))
-            notes.append("Detection does not prove this service was accessed through Tailscale.")
-        else:
-            notes.append("No listening services collected; host-only row.")
-        row["Additional Notes"] = " ".join(notes)
-        rows.append(row)
-    return rows
+def _choice(prompt, choices, input_fn, output):
+    while True:
+        value = _read_prompt(prompt, input_fn, output).strip()
+        if value in choices:
+            return choices[value]
+        print("Please enter {}.".format(" or ".join(choices)), file=output)
+
+
+def prompt_answers(input_fn=input, output=sys.stderr, existing=None):
+    answers = dict(existing or {})
+    for key, prompt in [("submitted_by", "Your name: "), ("directorate", "Directorate: "), ("division", "Division or facility: "), ("group_project", "Group or project: ")]:
+        if not answers.get(key):
+            answers[key] = _required(prompt, input_fn, output)
+    if not answers.get("argonne_managed"):
+        answers["argonne_managed"] = _choice("Argonne-managed host? [1] Yes [2] No: ", {"1": "Yes", "2": "No"}, input_fn, output)
+    if not answers.get("application"):
+        answers["application"] = _required("Application used with Tailscale: ", input_fn, output)
+    if not answers.get("access_source"):
+        answers["access_source"] = _choice("Access source location? [1] Outside ANL [2] Inside ANL: ", {"1": "Outside ANL", "2": "Inside ANL"}, input_fn, output)
+    return answers
+
+
+def build_row(host, answers, today=None):
+    today = today or date.today()
+    row = blank_row()
+    row.update({"Submitted By": answers["submitted_by"], "Date Submitted": today.isoformat(), "Directorate": answers["directorate"], "Division or Facility": answers["division"], "Group or Project": answers["group_project"], "Host Name or Asset ID": host.get("hostname", ""), "FQDN": host.get("fqdn", ""), "IP Address": "; ".join(host.get("ips", [])), "Subnet or CIDR": "; ".join(host.get("cidrs", [])), "Network Zone or Location": "Interfaces: " + "; ".join(host.get("interfaces", [])) if host.get("interfaces") else "", "Physical or Virtual": host.get("physical_virtual", ""), "Operating System": host.get("os", ""), "OS Version": host.get("os_version", ""), "Argonne Managed Host": answers["argonne_managed"], "Application or Service Name": answers["application"], "Access Source Location": answers["access_source"], "Additional Notes": "Host metadata collected automatically; complete the blank use-case fields and verify all values before submission.", "Information Sensitivity Reminder": REMINDER})
+    return row
 
 
 def write_atomic(path, content):
@@ -317,23 +214,40 @@ def write_atomic(path, content):
         raise
 
 
+def _normalize_choice(value, allowed, flag):
+    if value is None:
+        return None
+    lookup = {item.lower(): item for item in allowed}
+    normalized = lookup.get(value.lower())
+    if normalized is None:
+        raise ValueError("{} must be one of: {}".format(flag, ", ".join(allowed)))
+    return normalized
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--header", action="store_true", help="include the 67-column header")
+    parser.add_argument("--header", action="store_true", help="include the 27-column header")
     parser.add_argument("--output", metavar="FILE", help="atomically write CSV to FILE")
-    parser.add_argument("--no-listeners", action="store_true", help="skip listener/process discovery")
+    parser.add_argument("--submitted-by")
+    parser.add_argument("--directorate")
+    parser.add_argument("--division")
+    parser.add_argument("--group-project")
+    parser.add_argument("--argonne-managed")
+    parser.add_argument("--application")
+    parser.add_argument("--access-source")
     args = parser.parse_args(argv)
     try:
-        host = discover_host()
-        services, diagnostics = ([], ["Listener discovery disabled by --no-listeners."]) if args.no_listeners else discover_services(host["os"])
-        for diagnostic in diagnostics:
-            print("notice: " + diagnostic, file=sys.stderr)
-        text = render_csv(build_rows(host, services, diagnostics), include_header=args.header)
+        existing = {"submitted_by": args.submitted_by, "directorate": args.directorate, "division": args.division, "group_project": args.group_project, "argonne_managed": _normalize_choice(args.argonne_managed, ("Yes", "No"), "--argonne-managed"), "application": args.application, "access_source": _normalize_choice(args.access_source, ("Outside ANL", "Inside ANL"), "--access-source")}
+        answers = prompt_answers(input_fn=input, output=sys.stderr, existing=existing)
+        text = render_csv([build_row(discover_host(), answers)], include_header=args.header)
         if args.output:
             write_atomic(args.output, text)
         else:
             sys.stdout.write(text)
         return 0
+    except (EOFError, KeyboardInterrupt):
+        print("error: input cancelled", file=sys.stderr)
+        return 1
     except Exception as exc:
         print("error: {}".format(exc), file=sys.stderr)
         return 1
