@@ -19,12 +19,13 @@ python3 collect_host_intake.py --header --output host-intake.csv
 The script asks for:
 
 - Your name
+- Email address
 - Directorate
 - Division or facility
 - Group or project
 - Whether the host is Argonne managed
 - Application used with Tailscale
-- Access source location: `Outside ANL` or `Inside ANL`
+- Access source location: `Outside ANL`, `Inside ANL`, or `Mobile/Laptop`
 
 `Date Submitted` is filled automatically with the local system date when the script runs. Hostname, validated FQDN, addresses, subnets, interfaces, OS, and OS version are collected automatically. Reverse-DNS `.arpa` artifacts are rejected as FQDNs.
 
@@ -37,12 +38,13 @@ Every question has a corresponding option:
 ```bash
 python3 collect_host_intake.py --header --output host-intake.csv \
   --submitted-by "Taylor Childers" \
+  --email "jchilders@anl.gov" \
   --directorate CELS \
   --division ALCF \
   --group-project "Agent project" \
   --argonne-managed Yes \
   --application "Hermes HTTP agent" \
-  --access-source "Inside ANL"
+  --access-source "Mobile/Laptop"
 ```
 
 If only some options are supplied, the script prompts for the missing answers.

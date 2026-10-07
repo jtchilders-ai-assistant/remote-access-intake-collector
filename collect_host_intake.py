@@ -16,7 +16,7 @@ from collections import namedtuple
 from datetime import date
 from pathlib import Path
 
-HEADER = ["Record ID", "Submitted By", "Date Submitted", "Directorate", "Division or Facility", "Group or Project", "System Owner", "System Administrator", "Host Name or Asset ID", "FQDN", "IP Address", "Subnet or CIDR", "Network Zone or Location", "Physical or Virtual", "Operating System", "OS Version", "Argonne Managed Host", "Application or Service Name", "Application Purpose or Lost Capability", "Impact of Tailscale Block", "Access Source Location", "Protocol", "Port or Port Range", "Transport", "HTTP or HTTPS URL Path", "Additional Notes", "Information Sensitivity Reminder"]
+HEADER = ["Record ID", "Submitted By", "Email Address", "Date Submitted", "Directorate", "Division or Facility", "Group or Project", "System Owner", "System Administrator", "Host Name or Asset ID", "FQDN", "IP Address", "Subnet or CIDR", "Network Zone or Location", "Physical or Virtual", "Operating System", "OS Version", "Argonne Managed Host", "Application or Service Name", "Application Purpose or Lost Capability", "Impact of Tailscale Block", "Access Source Location", "Protocol", "Port or Port Range", "Transport", "HTTP or HTTPS URL Path", "Additional Notes", "Information Sensitivity Reminder"]
 REMINDER = "Do not enter passwords, private keys, tokens, credentials, or other secrets. Verify automatically collected values before submission."
 CommandResult = namedtuple("CommandResult", "ok stdout stderr")
 
@@ -178,7 +178,7 @@ def _choice(prompt, choices, input_fn, output):
 
 def prompt_answers(input_fn=input, output=sys.stderr, existing=None):
     answers = dict(existing or {})
-    for key, prompt in [("submitted_by", "Your name: "), ("directorate", "Directorate: "), ("division", "Division or facility: "), ("group_project", "Group or project: ")]:
+    for key, prompt in [("submitted_by", "Your name: "), ("email", "Email address: "), ("directorate", "Directorate: "), ("division", "Division or facility: "), ("group_project", "Group or project: ")]:
         if not answers.get(key):
             answers[key] = _required(prompt, input_fn, output)
     if not answers.get("argonne_managed"):
@@ -186,14 +186,14 @@ def prompt_answers(input_fn=input, output=sys.stderr, existing=None):
     if not answers.get("application"):
         answers["application"] = _required("Application used with Tailscale: ", input_fn, output)
     if not answers.get("access_source"):
-        answers["access_source"] = _choice("Access source location? [1] Outside ANL [2] Inside ANL: ", {"1": "Outside ANL", "2": "Inside ANL"}, input_fn, output)
+        answers["access_source"] = _choice("Access source location? [1] Outside ANL [2] Inside ANL [3] Mobile/Laptop: ", {"1": "Outside ANL", "2": "Inside ANL", "3": "Mobile/Laptop"}, input_fn, output)
     return answers
 
 
 def build_row(host, answers, today=None):
     today = today or date.today()
     row = blank_row()
-    row.update({"Submitted By": answers["submitted_by"], "Date Submitted": today.isoformat(), "Directorate": answers["directorate"], "Division or Facility": answers["division"], "Group or Project": answers["group_project"], "Host Name or Asset ID": host.get("hostname", ""), "FQDN": host.get("fqdn", ""), "IP Address": "; ".join(host.get("ips", [])), "Subnet or CIDR": "; ".join(host.get("cidrs", [])), "Network Zone or Location": "Interfaces: " + "; ".join(host.get("interfaces", [])) if host.get("interfaces") else "", "Physical or Virtual": host.get("physical_virtual", ""), "Operating System": host.get("os", ""), "OS Version": host.get("os_version", ""), "Argonne Managed Host": answers["argonne_managed"], "Application or Service Name": answers["application"], "Access Source Location": answers["access_source"], "Additional Notes": "Host metadata collected automatically; complete the blank use-case fields and verify all values before submission.", "Information Sensitivity Reminder": REMINDER})
+    row.update({"Submitted By": answers["submitted_by"], "Email Address": answers["email"], "Date Submitted": today.isoformat(), "Directorate": answers["directorate"], "Division or Facility": answers["division"], "Group or Project": answers["group_project"], "Host Name or Asset ID": host.get("hostname", ""), "FQDN": host.get("fqdn", ""), "IP Address": "; ".join(host.get("ips", [])), "Subnet or CIDR": "; ".join(host.get("cidrs", [])), "Network Zone or Location": "Interfaces: " + "; ".join(host.get("interfaces", [])) if host.get("interfaces") else "", "Physical or Virtual": host.get("physical_virtual", ""), "Operating System": host.get("os", ""), "OS Version": host.get("os_version", ""), "Argonne Managed Host": answers["argonne_managed"], "Application or Service Name": answers["application"], "Access Source Location": answers["access_source"], "Additional Notes": "Host metadata collected automatically; complete the blank use-case fields and verify all values before submission.", "Information Sensitivity Reminder": REMINDER})
     return row
 
 
@@ -226,9 +226,10 @@ def _normalize_choice(value, allowed, flag):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--header", action="store_true", help="include the 27-column header")
+    parser.add_argument("--header", action="store_true", help="include the 28-column header")
     parser.add_argument("--output", metavar="FILE", help="atomically write CSV to FILE")
     parser.add_argument("--submitted-by")
+    parser.add_argument("--email")
     parser.add_argument("--directorate")
     parser.add_argument("--division")
     parser.add_argument("--group-project")
@@ -237,7 +238,7 @@ def main(argv=None):
     parser.add_argument("--access-source")
     args = parser.parse_args(argv)
     try:
-        existing = {"submitted_by": args.submitted_by, "directorate": args.directorate, "division": args.division, "group_project": args.group_project, "argonne_managed": _normalize_choice(args.argonne_managed, ("Yes", "No"), "--argonne-managed"), "application": args.application, "access_source": _normalize_choice(args.access_source, ("Outside ANL", "Inside ANL"), "--access-source")}
+        existing = {"submitted_by": args.submitted_by, "email": args.email, "directorate": args.directorate, "division": args.division, "group_project": args.group_project, "argonne_managed": _normalize_choice(args.argonne_managed, ("Yes", "No"), "--argonne-managed"), "application": args.application, "access_source": _normalize_choice(args.access_source, ("Outside ANL", "Inside ANL", "Mobile/Laptop"), "--access-source")}
         answers = prompt_answers(input_fn=input, output=sys.stderr, existing=existing)
         text = render_csv([build_row(discover_host(), answers)], include_header=args.header)
         if args.output:

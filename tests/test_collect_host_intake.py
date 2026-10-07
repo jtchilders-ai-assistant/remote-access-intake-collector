@@ -12,13 +12,13 @@ sys.path.insert(0, str(ROOT))
 
 import collect_host_intake as c
 
-EXPECTED_HEADER = ["Record ID", "Submitted By", "Date Submitted", "Directorate", "Division or Facility", "Group or Project", "System Owner", "System Administrator", "Host Name or Asset ID", "FQDN", "IP Address", "Subnet or CIDR", "Network Zone or Location", "Physical or Virtual", "Operating System", "OS Version", "Argonne Managed Host", "Application or Service Name", "Application Purpose or Lost Capability", "Impact of Tailscale Block", "Access Source Location", "Protocol", "Port or Port Range", "Transport", "HTTP or HTTPS URL Path", "Additional Notes", "Information Sensitivity Reminder"]
+EXPECTED_HEADER = ["Record ID", "Submitted By", "Email Address", "Date Submitted", "Directorate", "Division or Facility", "Group or Project", "System Owner", "System Administrator", "Host Name or Asset ID", "FQDN", "IP Address", "Subnet or CIDR", "Network Zone or Location", "Physical or Virtual", "Operating System", "OS Version", "Argonne Managed Host", "Application or Service Name", "Application Purpose or Lost Capability", "Impact of Tailscale Block", "Access Source Location", "Protocol", "Port or Port Range", "Transport", "HTTP or HTTPS URL Path", "Additional Notes", "Information Sensitivity Reminder"]
 
 
 class SchemaTests(unittest.TestCase):
     def test_exact_reduced_header(self):
         self.assertEqual(c.HEADER, EXPECTED_HEADER)
-        self.assertEqual(len(c.HEADER), 27)
+        self.assertEqual(len(c.HEADER), 28)
         for removed in ("Submission Status", "Technical Contact", "EDR Installed", "MFA Required"):
             self.assertNotIn(removed, c.HEADER)
 
@@ -27,7 +27,7 @@ class SchemaTests(unittest.TestCase):
         row["Additional Notes"] = "comma, newline\nquoted"
         parsed = list(csv.reader(io.StringIO(c.render_csv([row], include_header=True))))
         self.assertEqual(parsed[0], EXPECTED_HEADER)
-        self.assertTrue(all(len(item) == 27 for item in parsed))
+        self.assertTrue(all(len(item) == 28 for item in parsed))
         self.assertEqual(parsed[1][-2], "comma, newline\nquoted")
 
 
@@ -54,24 +54,25 @@ class AddressTests(unittest.TestCase):
 
 class IntakeTests(unittest.TestCase):
     HOST = {"hostname": "node1", "fqdn": "node1.example", "ips": ["10.0.0.2"], "cidrs": ["10.0.0.0/24"], "interfaces": ["eth0"], "os": "Linux", "os_version": "TestOS 1", "physical_virtual": "Virtual (detected)"}
-    ANSWERS = {"submitted_by": "Taylor Childers", "directorate": "CELS", "division": "ALCF", "group_project": "Agent project", "argonne_managed": "Yes", "application": "Hermes HTTP agent", "access_source": "Inside ANL"}
+    ANSWERS = {"submitted_by": "Taylor Childers", "email": "taylor@example.org", "directorate": "CELS", "division": "ALCF", "group_project": "Agent project", "argonne_managed": "Yes", "application": "Hermes HTTP agent", "access_source": "Inside ANL"}
 
     def test_builds_one_row_with_answers_and_current_date(self):
         row = c.build_row(self.HOST, self.ANSWERS, today=date(2026, 10, 7))
         self.assertEqual(row["Date Submitted"], "2026-10-07")
         self.assertEqual(row["Submitted By"], "Taylor Childers")
+        self.assertEqual(row["Email Address"], "taylor@example.org")
         self.assertEqual(row["Application or Service Name"], "Hermes HTTP agent")
         self.assertEqual(row["Access Source Location"], "Inside ANL")
         self.assertEqual(row["Host Name or Asset ID"], "node1")
         self.assertEqual(row["Protocol"], "")
 
     def test_prompt_retries_choice_and_collects_required_answers(self):
-        answers = iter(["Taylor", "CELS", "ALCF", "Project", "maybe", "1", "Hermes", "3", "2"])
+        answers = iter(["Taylor", "taylor@example.org", "CELS", "ALCF", "Project", "maybe", "1", "Hermes", "4", "3"])
         output = io.StringIO()
         result = c.prompt_answers(input_fn=lambda _: next(answers), output=output)
         self.assertEqual(result["argonne_managed"], "Yes")
-        self.assertEqual(result["access_source"], "Inside ANL")
-        self.assertIn("Please enter 1 or 2", output.getvalue())
+        self.assertEqual(result["access_source"], "Mobile/Laptop")
+        self.assertIn("Please enter 1 or 2 or 3", output.getvalue())
 
 
 class CLITests(unittest.TestCase):
@@ -79,16 +80,17 @@ class CLITests(unittest.TestCase):
         return subprocess.run([sys.executable, str(ROOT / "collect_host_intake.py"), *args], input=input_text, text=True, capture_output=True, timeout=20)
 
     def test_noninteractive_flags_create_one_reduced_row(self):
-        result = self.run_cli("--header", "--submitted-by", "Taylor", "--directorate", "CELS", "--division", "ALCF", "--group-project", "Agents", "--argonne-managed", "Yes", "--application", "Hermes", "--access-source", "Outside ANL")
+        result = self.run_cli("--header", "--submitted-by", "Taylor", "--email", "taylor@example.org", "--directorate", "CELS", "--division", "ALCF", "--group-project", "Agents", "--argonne-managed", "Yes", "--application", "Hermes", "--access-source", "Mobile/Laptop")
         self.assertEqual(result.returncode, 0, result.stderr)
         rows = list(csv.reader(io.StringIO(result.stdout)))
         self.assertEqual(len(rows), 2)
-        self.assertTrue(all(len(row) == 27 for row in rows))
+        self.assertTrue(all(len(row) == 28 for row in rows))
         self.assertEqual(rows[1][EXPECTED_HEADER.index("Date Submitted")], date.today().isoformat())
-        self.assertEqual(rows[1][EXPECTED_HEADER.index("Access Source Location")], "Outside ANL")
+        self.assertEqual(rows[1][EXPECTED_HEADER.index("Email Address")], "taylor@example.org")
+        self.assertEqual(rows[1][EXPECTED_HEADER.index("Access Source Location")], "Mobile/Laptop")
 
     def test_interactive_questions_create_one_row(self):
-        result = self.run_cli("--header", input_text="Taylor\nCELS\nALCF\nAgents\n1\nHermes\n2\n")
+        result = self.run_cli("--header", input_text="Taylor\ntaylor@example.org\nCELS\nALCF\nAgents\n1\nHermes\n2\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         rows = list(csv.reader(io.StringIO(result.stdout)))
         self.assertEqual(len(rows), 2)
@@ -97,7 +99,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(rows[1][EXPECTED_HEADER.index("Access Source Location")], "Inside ANL")
 
     def test_partial_flags_prompt_only_for_missing_fields(self):
-        result = self.run_cli("--submitted-by", "Taylor", "--directorate", "CELS", input_text="ALCF\nAgents\n2\nHermes\n1\n")
+        result = self.run_cli("--submitted-by", "Taylor", "--email", "taylor@example.org", "--directorate", "CELS", input_text="ALCF\nAgents\n2\nHermes\n1\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("Your name", result.stderr)
         self.assertNotIn("Directorate", result.stderr)
@@ -106,12 +108,12 @@ class CLITests(unittest.TestCase):
     def test_atomic_output(self):
         with tempfile.TemporaryDirectory() as td:
             target = Path(td) / "result.csv"
-            result = self.run_cli("--header", "--output", str(target), "--submitted-by", "Taylor", "--directorate", "CELS", "--division", "ALCF", "--group-project", "Agents", "--argonne-managed", "Yes", "--application", "Hermes", "--access-source", "Inside ANL")
+            result = self.run_cli("--header", "--output", str(target), "--submitted-by", "Taylor", "--email", "taylor@example.org", "--directorate", "CELS", "--division", "ALCF", "--group-project", "Agents", "--argonne-managed", "Yes", "--application", "Hermes", "--access-source", "Inside ANL")
             self.assertEqual(result.returncode, 0, result.stderr)
             with target.open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.reader(handle))
             self.assertEqual(len(rows), 2)
-            self.assertTrue(all(len(row) == 27 for row in rows))
+            self.assertTrue(all(len(row) == 28 for row in rows))
 
 
 if __name__ == "__main__":
